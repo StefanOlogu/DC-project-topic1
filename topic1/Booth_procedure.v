@@ -5,11 +5,12 @@ module reg_m #(parameter WIDTH = 8) (input clk, rst_b, load_inbus, input [WIDTH 
     end
 endmodule
 
-module reg_q #(parameter WIDTH = 8) (input clk, rst_b, shift, load_inbus, load_outbus,input [1 : 0] lsb_A, input [WIDTH - 1 : 0] inbus, output [WIDTH - 1 : 0] outbus, output [WIDTH - 1 : -1] q);
+module reg_q #(parameter WIDTH = 8) (input clk, rst_b, shift, load_inbus, clear_q, load_outbus,input [1 : 0] lsb_A, input [WIDTH - 1 : 0] inbus, output [WIDTH - 1 : 0] outbus, output [WIDTH - 1 : -1] q);
     reg [WIDTH - 1 : -1] q_reg;
 
     always @(posedge clk, negedge rst_b) begin
         if(!rst_b)              q_reg <= 0;
+        else if(clear_q)        q_reg <= 0;
         else if(load_inbus)     q_reg <= {inbus[WIDTH - 1 : 0],1'b0};
         else if(shift)          q_reg <= {lsb_A,q_reg[WIDTH - 1 : 1]};
     end
@@ -57,7 +58,7 @@ module Booth_multiplier #(parameter WIDTH = 8) (input clk,rst_b,input begin_sig,
     wire [1:0] shift_A_to_Q;
 
     reg c_clear_A, c_load_M, c_load_Q, c_load_adder_to_A;
-    reg c_shift, c_outbus_A, c_outbus_Q, c_mux_sel, c_add_sub;
+    reg c_shift, c_outbus_A, c_outbus_Q, c_mux_sel, c_add_sub,c_clear_Q;
 
     localparam S_IDLE = 3'b000;
     localparam S_LOAD_M = 3'b001;
@@ -66,9 +67,13 @@ module Booth_multiplier #(parameter WIDTH = 8) (input clk,rst_b,input begin_sig,
     localparam S_SHIFT = 3'b100;
     localparam S_OUTPUT_A = 3'b101;
     localparam S_OUTPUT_Q = 3'b110;
+    localparam S_CHECK_0 = 3'b111;
 
     reg [2 : 0] state, next_state;
     reg [2 : 0] shift_counter;
+
+    wire m_is_zero = ~|m_out;
+    wire q_is_zero = ~|q_full[7:0];
 
     always @(posedge clk, negedge rst_b) begin
         if (!rst_b) begin
@@ -165,6 +170,16 @@ module Booth_multiplier #(parameter WIDTH = 8) (input clk,rst_b,input begin_sig,
                 c_outbus_Q = 1;
                 end_sig = 1;
                 next_state = S_IDLE;
+            end
+
+            S_CHECK_0:begin
+                if(m_is_zero || q_is_zero)begin
+                    c_clear_A = 1;
+                    c_clear_Q = 1;
+                    next_state = S_OUTPUT_A;
+                end else begin
+                    next_state = S_CALC;
+                end
             end
 
             default: next_state = S_IDLE;
