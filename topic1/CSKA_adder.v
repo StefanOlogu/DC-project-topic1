@@ -49,6 +49,9 @@ module cska #(parameter WIDTH = 16) (input [WIDTH - 1 : 0] x, y, input s, output
     localparam OPTIMAL_LENGTH = sqrt(2 * WIDTH) / 2;
     localparam NUMBER_OF_BLOCKS = WIDTH / OPTIMAL_LENGTH;
 
+    localparam LAST_BLOCK_START = (NUMBER_OF_BLOCKS - 1) * OPTIMAL_LENGTH;
+    localparam LAST_BLOCK_WIDTH = WIDTH - LAST_BLOCK_START; 
+
     wire [NUMBER_OF_BLOCKS : 0] block_carry;
     wire [NUMBER_OF_BLOCKS : 0] propagate;
     wire [NUMBER_OF_BLOCKS : 0] ripple_co;
@@ -68,10 +71,9 @@ module cska #(parameter WIDTH = 16) (input [WIDTH - 1 : 0] x, y, input s, output
         end
     endgenerate
 
-    normal_rca #(OPTIMAL_LENGTH) last (.x(x_used[(NUMBER_OF_BLOCKS - 1) * OPTIMAL_LENGTH +: OPTIMAL_LENGTH]),.y(y[(NUMBER_OF_BLOCKS - 1) * OPTIMAL_LENGTH +: OPTIMAL_LENGTH]),.ci(block_carry[NUMBER_OF_BLOCKS - 1]),.sum(sum[(NUMBER_OF_BLOCKS - 1) * OPTIMAL_LENGTH +: OPTIMAL_LENGTH]),.co(co));
+    normal_rca #(LAST_BLOCK_WIDTH) last (.x(x_used[LAST_BLOCK_START +: LAST_BLOCK_WIDTH]),.y(y[LAST_BLOCK_START +: LAST_BLOCK_WIDTH]),.ci(block_carry[NUMBER_OF_BLOCKS - 1]),.sum(sum[LAST_BLOCK_START +: LAST_BLOCK_WIDTH]),.co(co));
 endmodule
 
-`timescale 1ns / 1ps
 
 module tb_cska;
 
