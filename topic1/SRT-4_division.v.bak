@@ -243,9 +243,3 @@ module tb_srt4_divider;
         $finish;
     end
 endmodule
-
-
-
-/*
- * vsim -c work.tb_srt4_divider -do "run -all; quit"
-*/
