@@ -10,7 +10,7 @@ z2
 cModel Technology
 Z0 d/home/stefan/DC_project_topic1/topic1
 vBooth_multiplier
-Z1 !s110 1773234304
+Z1 !s110 1773766054
 !i10b 1
 !s100 QzHXC7a;2MF0IKUe9a3Lj3
 Z2 !s11b Dg1SIo80bB@j0V0VzS_@n1
@@ -26,7 +26,7 @@ Z7 OV;L;2020.1;71
 r1
 !s85 0
 31
-Z8 !s108 1773234304.000000
+Z8 !s108 1773766054.000000
 !s107 Booth_procedure.v|CSKA_adder.v|
 Z9 !s90 -reportprogress|300|CSKA_adder.v|Booth_procedure.v|
 !i113 1
