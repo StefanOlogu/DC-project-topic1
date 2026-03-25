@@ -203,111 +203,229 @@
 
     endmodule
 
+`timescale 1ns / 1ps
 
-    module tb_booth_multiplier;
+module tb_alu_system;
 
-        // Signals
-        reg clk;
-        reg rst_b;
-        reg begin_sig;
-        reg [7:0] inbus;
+    // --- System Signals ---
+    reg clk;
+    reg rst_b;
+    
+    // --- The Shared System Buses ---
+    reg  [7:0] shared_inbus;
+    wire [7:0] shared_outbus;
+    
+    // --- Hardware Control Signals ---
+    reg mul_begin;
+    reg div_begin;
+    reg add_enable; // Controls the Adder's tri-state buffer
+    
+    // --- Hardware Status Wires ---
+    wire mul_end;
+    wire div_end;
+    wire div_error;
+
+    // --- Adder Specific Registers ---
+    reg [7:0] add_x;
+    reg [7:0] add_y;
+    reg add_s; // 0 = Add, 1 = Subtract
+    wire [7:0] add_sum;
+    wire add_co;
+
+    // History register to capture the first byte of 16-bit answers
+    reg [7:0] outbus_prev;
+
+    // ==========================================
+    //       INSTANTIATE ALL HARDWARE UNITS
+    // ==========================================
+
+    // 1. The Radix-4 Booth Multiplier
+    Booth_multiplier #(8) MULTIPLIER (
+        .clk(clk),
+        .rst_b(rst_b),
+        .begin_sig(mul_begin),
+        .inbus(shared_inbus),
+        .outbus(shared_outbus), // Drives Z when idle
+        .end_sig(mul_end)
+    );
+
+    // 2. The SRT-4 Divider
+    srt4_divider #(8) DIVIDER (
+        .clk(clk),
+        .rst_b(rst_b),
+        .begin_sig(div_begin),
+        .inbus(shared_inbus),
+        .outbus(shared_outbus), // Drives Z when idle
+        .end_sig(div_end),
+        .error(div_error)
+    );
+
+    // 3. The Carry-Skip Adder (CSKA)
+    cska #(8) ADDER_SUBTRACTOR (
+        .x(add_x),
+        .y(add_y),
+        .s(add_s),
+        .sum(add_sum),
+        .co(add_co)
+    );
+
+    // Tri-State Buffer to connect the Combinational Adder to the Shared Bus
+    assign shared_outbus = (add_enable) ? add_sum : 8'hZZ;
+
+    // ==========================================
+    //             CLOCK & HISTORY
+    // ==========================================
+    always #5 clk = ~clk;
+
+    always @(posedge clk) begin
+        outbus_prev <= shared_outbus;
+    end
+
+    // ==========================================
+    //          THE "PLAYER" ALU TASK
+    // ==========================================
+    // Opcodes: 0=ADD, 1=SUB, 2=MUL, 3=DIV
+    task run_alu;
+        input [1:0] opcode;
+        input signed [7:0] num1;
+        input signed [7:0] num2;
         
-        wire [7:0] outbus;
-        wire end_sig;
-
-        // History register to capture A before Q overwrites the bus
-        reg [7:0] outbus_prev;
-
-        // Instantiate the Multiplier
-        Booth_multiplier #(8) DUT (
-            .clk(clk),
-            .rst_b(rst_b),
-            .begin_sig(begin_sig),
-            .inbus(inbus),
-            .outbus(outbus),
-            .end_sig(end_sig)
-        );
-
-        // Clock Generation 
-        always #5 clk = ~clk;
-
-        // History Capture Logic
-        always @(posedge clk) begin
-            outbus_prev <= outbus;
-        end
-
-        // The Testing Task
-        task run_multiplication;
-            input signed [7:0] test_M;
-            input signed [7:0] test_Q;
-            reg signed [15:0] expected_result;
-            reg signed [15:0] actual_result;
-            begin
-                expected_result = test_M * test_Q;
-
-                // 1. Turn on the FSM on falling edge to not lose any information
-                @(negedge clk);
-                begin_sig = 1;
-
-                // 2. FSM prepares to load M. Put M on the bus
-                @(negedge clk);
-                begin_sig = 0; 
-                inbus = test_M; // Stable before the posedge arrives
-
-                // 3. FSM prepares to load Q. Put Q on the bus
-                @(negedge clk);
-                inbus = test_Q; // Stable before the posedge arrives
-
-                // 4. FSM prepares to Calculate. Put the bus in high impedance
-                @(negedge clk);
-                inbus = 8'hZZ;
-
-                // 5. Wait for the multiplier to finish
-                wait(end_sig == 1'b1);
-                
-                // 6. Wait half a cycle for the flip-flops
-                @(negedge clk); 
-                
-                actual_result = {outbus_prev, outbus};
-
-                if (actual_result === expected_result) begin
-                    $display("[PASS] %d * %d = %d", test_M, test_Q, actual_result);
-                end else begin
-                    $display("[FAIL] %d * %d = Expected %d, but got %d", test_M, test_Q, expected_result, actual_result);
+        reg signed [15:0] expected_16;
+        reg signed [15:0] actual_16;
+        reg signed [7:0] expected_8;
+        reg signed [7:0] actual_8;
+        begin
+            @(negedge clk); // Align to safe edge
+            
+            case (opcode)
+                2'b00, 2'b01: begin 
+                    // --- ADD (00) and SUBTRACT (01) ---
+                    add_x = num1;
+                    add_y = num2;
+                    add_s = (opcode == 2'b01) ? 1'b1 : 1'b0;
+                    add_enable = 1'b1; // Put answer on the shared bus
+                    
+                    @(negedge clk); // Wait 1 cycle for combinational logic
+                    actual_8 = shared_outbus;
+                    expected_8 = (opcode == 2'b00) ? (num2 + num1) : (num2 - num1);
+                    
+                    if (actual_8 === expected_8)
+                        $display("[PASS] %s: %4d %s %4d = %4d", 
+                            (opcode==0)?"ADD":"SUB", num2, (opcode==0)? "+":"-", num1, actual_8);
+                    else
+                        $display("[FAIL] %s: %4d %s %4d = Expected %4d, Got %4d", 
+                            (opcode==0)?"ADD":"SUB", num2, (opcode==0)? "+":"-", num1, expected_8, actual_8);
+                            
+                    add_enable = 1'b0; // Release the bus!
                 end
 
-                // Wait to return to IDLE
-                @(negedge clk);
-            end
-        endtask
+                2'b10: begin 
+                    // --- MULTIPLY (10) ---
+                    expected_16 = num1 * num2;
+                    
+                    mul_begin = 1;      // Wake up Multiplier
+                    @(negedge clk);
+                    mul_begin = 0;
+                    shared_inbus = num1; // Load M
+                    
+                    @(negedge clk);
+                    shared_inbus = num2; // Load Q
+                    
+                    @(negedge clk);
+                    shared_inbus = 8'hZZ; // Release Bus
+                    
+                    wait(mul_end == 1'b1);
+                    @(negedge clk);
+                    
+                    actual_16 = {outbus_prev, shared_outbus}; // {A, Q}
+                    
+                    if (actual_16 === expected_16)
+                        $display("[PASS] MUL: %4d * %4d = %6d", num1, num2, actual_16);
+                    else
+                        $display("[FAIL] MUL: %4d * %4d = Expected %6d, Got %6d", num1, num2, expected_16, actual_16);
+                end
 
-        // Main Simulation Sequence
-        initial begin
-            clk = 0;
-            rst_b = 0;
-            begin_sig = 0;
-            inbus = 8'hZZ;
-
-            $display("========================================");
-            $display("   STARTING RADIX-4 BOOTH SIMULATION    ");
-            $display("========================================");
-
-            #15 rst_b = 1;//active low asyncronous reset
-
-            // Run the Test Cases
-            run_multiplication(8'd5,  8'd3);   
-            run_multiplication(8'd12, 8'd10);  
-            run_multiplication(8'd7, -8'd4);   
-            run_multiplication(-8'd6, 8'd2);   
-            run_multiplication(-8'd8, -8'd3);  
-            run_multiplication(8'd0,  8'd15);  
-            run_multiplication(8'd127, 8'd1);  
-            run_multiplication(-8'd128,-8'd1); 
-
-            $display("========================================");
-            $display("          SIMULATION COMPLETE           ");
-            $display("========================================");
-            
+                2'b11: begin 
+                    // --- DIVIDE (11) ---
+                    div_begin = 1;      // Wake up Divider
+                    @(negedge clk);
+                    div_begin = 0;
+                    shared_inbus = num1; // Load Dividend (N)
+                    
+                    @(negedge clk);
+                    shared_inbus = num2; // Load Divisor (D)
+                    
+                    @(negedge clk);
+                    shared_inbus = 8'hZZ; // Release Bus
+                    
+                    wait(div_end == 1'b1);
+                    @(negedge clk);
+                    
+                    if (div_error) begin
+                        $display("[PASS] DIV: %4d / %4d = DIV_BY_ZERO ERROR CAUGHT", num1, num2);
+                    end else begin
+                        actual_8 = shared_outbus;      // Quotient is currently on bus
+                        actual_16 = outbus_prev;       // Remainder was on bus last cycle
+                        
+                        expected_8 = num1 / num2;      // Expected Quotient
+                        expected_16 = num1 % num2;     // Expected Remainder
+                        
+                        if (actual_8 === expected_8 && actual_16 === expected_16)
+                            $display("[PASS] DIV: %4d / %4d = %4d (Rem: %4d)", num1, num2, actual_8, actual_16);
+                        else
+                            $display("[FAIL] DIV: %4d / %4d = Expected Q:%4d R:%4d, Got Q:%4d R:%4d", 
+                                     num1, num2, expected_8, expected_16, actual_8, actual_16);
+                    end
+                end
+            endcase
+            @(negedge clk); // Buffer cycle between operations
         end
+    endtask
 
-    endmodule
+    // ==========================================
+    //           MAIN SIMULATION SEQUENCE
+    // ==========================================
+    initial begin
+        // Initialize everything safely
+        clk = 0;
+        rst_b = 0;
+        shared_inbus = 8'hZZ;
+        mul_begin = 0;
+        div_begin = 0;
+        add_enable = 0;
+        add_x = 0; add_y = 0; add_s = 0;
+
+        $display("========================================");
+        $display("   STARTING UNIFIED ALU SIMULATION      ");
+        $display("========================================");
+
+        #15 rst_b = 1;
+
+        // --- The "Player's Choice" Tests ---
+        // Format: run_alu(Opcode, Number1, Number2);
+        
+        $display("\n--- Testing Addition (Opcode 00) ---");
+        run_alu(2'b00, 8'd15, 8'd45);
+        run_alu(2'b00, -8'd10, 8'd5);
+
+        $display("\n--- Testing Subtraction (Opcode 01) ---");
+        run_alu(2'b01, 8'd20, 8'd50); // 50 - 20
+        run_alu(2'b01, -8'd15, 8'd10); // 10 - (-15)
+
+        $display("\n--- Testing Multiplication (Opcode 10) ---");
+        run_alu(2'b10, 8'd12, 8'd10);
+        run_alu(2'b10, -8'd6, 8'd2);
+        run_alu(2'b10, 8'd0, 8'd15);   // Tests your early exit shortcut!
+
+        $display("\n--- Testing Division (Opcode 11) ---");
+        run_alu(2'b11, 8'd100, 8'd25);
+        run_alu(2'b11, 8'd15, 8'd4);
+        run_alu(2'b11, 8'd50, 8'd0);   // Tests division by zero!
+
+        $display("\n========================================");
+        $display("          SIMULATION COMPLETE           ");
+        $display("========================================");
+        
+    end
+
+endmodule
