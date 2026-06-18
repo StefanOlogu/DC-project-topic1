@@ -1,8 +1,8 @@
 # add all Verilog source files, separated by spaces
-set sourcefiles {CSKA_adder.v Booth_procedure.v}
+set sourcefiles {CSKA_adder.v Booth_procedure.v SRT-4_division.v}
 
 # set name of the top module
-set topmodule tb_booth_multiplier
+set topmodule tb_alu_system
 
 ###################################################
 #####DO NOT MODIFY THE SCRIPT BELLOW THIS LINE#####
