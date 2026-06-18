@@ -1,0 +1,56 @@
+m255
+K3
+13
+cModel Technology
+Z0 dC:\Users\rrobe\Desktop\faculta\year2\sem2\DC\DC-project-topic1\topic2
+vcache_controller
+Z1 Mx1 6 sv_std 3 std
+Z2 DXx6 sv_std 3 std 0 22 WnQ=;W1X^o9K1PIQTgInR3
+!s100 k2IJzHc2Qe@N4c@gU2n>B1
+IkN7XEnC26o=195SEGUnKW1
+Vz@Q`S[`hkjg`oLmm>6QK52
+S1
+w1781790511
+8cache_controller.sv
+Fcache_controller.sv
+L0 13
+Z3 OV;L;6.5b;42
+r1
+!s85 0
+31
+!s101 -O0
+Z4 o-sv -O0
+vcache_controller_tb
+R1
+R2
+!s100 2Od2FfM^jc]z]=Xdl]J4O3
+Ih_:LlGRVX_hEh2EciHaPm1
+VZ7kLei3b>FLUG_E?^LK`V0
+S1
+w1781793981
+8cache_controller_tb.sv
+Fcache_controller_tb.sv
+L0 3
+R3
+r1
+!s85 0
+31
+!s101 -O0
+R4
+vmemory
+R1
+R2
+!s100 QjP`C:nZ9JWfLlI309DTV0
+IjPi9RkX@GoHn[ici30YnS3
+VZ0I559GHV5YX3n;H^CS3k1
+S1
+w1781792110
+8memory.sv
+Fmemory.sv
+L0 3
+R3
+r1
+!s85 0
+31
+!s101 -O0
+R4
