@@ -371,22 +371,35 @@
     end
 endmodule
 
+module Logic_Unit #(parameter WIDTH = 8) (
+    input [WIDTH-1:0] a,
+    input [WIDTH-1:0] b,
+    input [1:0] op, // 00=AND, 01=OR, 10=XOR
+    output [WIDTH-1:0] out
+);
+    assign out = (op == 2'b00) ? (a & b) :
+                 (op == 2'b01) ? (a | b) :
+                 (op == 2'b10) ? (a ^ b) : {WIDTH{1'b0}};
+endmodule
+
+`timescale 1ns / 1ps
+
 `timescale 1ns / 1ps
 
 module tb_alu_system;
-
     // --- System Signals ---
     reg clk;
     reg rst_b;
-    
+
     // --- The Shared System Buses ---
     reg  [7:0] shared_inbus;
     wire [7:0] shared_outbus;
-    
+
     // --- Hardware Control Signals ---
-    reg add_enable; 
-    
-    // NEW: Unified Math Unit Signals
+    reg add_enable;
+    reg logic_enable; // NEW: Logic enable flag
+
+    // --- Unified Math Unit Signals ---
     reg math_begin;
     reg math_opcode;  // 0 = MUL, 1 = DIV
     wire math_end;
@@ -399,6 +412,12 @@ module tb_alu_system;
     wire [7:0] add_sum;
     wire add_co;
 
+    // --- Logic Specific Registers ---
+    reg [7:0] logic_a;
+    reg [7:0] logic_b;
+    reg [1:0] logic_op;
+    wire [7:0] logic_out;
+
     // History register
     reg [7:0] outbus_prev;
 
@@ -406,7 +425,7 @@ module tb_alu_system;
     //       INSTANTIATE ALL HARDWARE UNITS
     // ==========================================
 
-    // 1. The Unified Radix-4 Math Unit (Replaces Mul & Div!)
+    // 1. The Unified Radix-4 Math Unit
     Unified_Radix4_ALU #(8) MATH_UNIT (
         .clk(clk),
         .rst_b(rst_b),
@@ -427,8 +446,18 @@ module tb_alu_system;
         .co(add_co)
     );
 
-    // Tri-State Buffer for the Adder
+    // 3. NEW: The Combinational Logic Unit 
+    Logic_Unit #(8) LOGICAL_OPS (
+        .a(logic_a),
+        .b(logic_b),
+        .op(logic_op),
+        .out(logic_out)
+    );
+
+    // Tri-State Buffers for the Shared Bus
+    // The ALU manages its own high-Z state internally.
     assign shared_outbus = (add_enable) ? add_sum : 8'hZZ;
+    assign shared_outbus = (logic_enable) ? logic_out : 8'hZZ;
 
     // ==========================================
     //             CLOCK & HISTORY
@@ -443,7 +472,7 @@ module tb_alu_system;
     //          THE "PLAYER" ALU TASK
     // ==========================================
     task run_alu;
-        input [1:0] sys_opcode; // 00=ADD, 01=SUB, 10=MUL, 11=DIV
+        input [2:0] sys_opcode; // EXPANDED: 000=ADD, 001=SUB, 010=MUL, 011=DIV, 100=AND, 101=OR, 110=XOR
         input signed [7:0] num1;
         input signed [7:0] num2;
         
@@ -451,43 +480,44 @@ module tb_alu_system;
         reg signed [15:0] actual_16;
         reg signed [7:0] expected_8;
         reg signed [7:0] actual_8;
+
         begin
-            @(negedge clk); 
-            
+            @(negedge clk);
+
             case (sys_opcode)
-                2'b00, 2'b01: begin 
-                    // --- ADD (00) and SUBTRACT (01) ---
+                3'b000, 3'b001: begin 
+                    // --- ADD (000) and SUBTRACT (001) ---
                     add_x = num1;
                     add_y = num2;
-                    add_s = (sys_opcode == 2'b01) ? 1'b1 : 1'b0;
+                    add_s = (sys_opcode == 3'b001) ? 1'b1 : 1'b0;
                     add_enable = 1'b1; 
                     
                     @(negedge clk); 
                     actual_8 = shared_outbus;
-                    expected_8 = (sys_opcode == 2'b00) ? (num2 + num1) : (num2 - num1);
-                    
+                    expected_8 = (sys_opcode == 3'b000) ? (num2 + num1) : (num2 - num1);
+
                     if (actual_8 === expected_8)
                         $display("[PASS] %s: %4d %s %4d = %4d", 
                             (sys_opcode==0)?"ADD":"SUB", num2, (sys_opcode==0)? "+":"-", num1, actual_8);
                     else
                         $display("[FAIL] %s: %4d %s %4d = Expected %4d, Got %4d", 
                             (sys_opcode==0)?"ADD":"SUB", num2, (sys_opcode==0)? "+":"-", num1, expected_8, actual_8);
-                            
+
                     add_enable = 1'b0; 
                 end
 
-                2'b10: begin 
-                    // --- MULTIPLY (10) ---
+                3'b010: begin 
+                    // --- MULTIPLY (010) ---
                     expected_16 = num1 * num2;
-                    
-                    math_opcode = 1'b0; // Tell the Unified ALU to Multiply
-                    math_begin = 1;     
+
+                    math_opcode = 1'b0; 
+                    math_begin = 1;
                     @(negedge clk);
                     math_begin = 0;
-                    shared_inbus = num1; // Load M
+                    shared_inbus = num1; 
                     
                     @(negedge clk);
-                    shared_inbus = num2; // Load Q
+                    shared_inbus = num2; 
                     
                     @(negedge clk);
                     shared_inbus = 8'hZZ; 
@@ -495,24 +525,25 @@ module tb_alu_system;
                     wait(math_end == 1'b1);
                     @(negedge clk);
                     
-                    actual_16 = {outbus_prev, shared_outbus}; 
-                    
+                    actual_16 = {outbus_prev, shared_outbus};
+
                     if (actual_16 === expected_16)
                         $display("[PASS] MUL: %4d * %4d = %6d", num1, num2, actual_16);
                     else
                         $display("[FAIL] MUL: %4d * %4d = Expected %6d, Got %6d", num1, num2, expected_16, actual_16);
                 end
 
-                2'b11: begin 
-                    // --- DIVIDE (11) ---
-                    math_opcode = 1'b1; // Tell the Unified ALU to Divide
-                    math_begin = 1;      
+                3'b011: begin 
+                    // --- DIVIDE (011) ---
+                    math_opcode = 1'b1;
+                    math_begin = 1;
+
                     @(negedge clk);
                     math_begin = 0;
-                    shared_inbus = num1; // Load Dividend (N)
+                    shared_inbus = num1; 
                     
                     @(negedge clk);
-                    shared_inbus = num2; // Load Divisor (D)
+                    shared_inbus = num2; 
                     
                     @(negedge clk);
                     shared_inbus = 8'hZZ; 
@@ -523,12 +554,12 @@ module tb_alu_system;
                     if (math_error) begin
                         $display("[PASS] DIV: %4d / %4d = DIV_BY_ZERO ERROR CAUGHT", num1, num2);
                     end else begin
-                        actual_8 = shared_outbus;      
+                        actual_8 = shared_outbus;
                         actual_16 = outbus_prev;       
                         
                         expected_8 = num1 / num2;      
-                        expected_16 = num1 % num2;     
-                        
+                        expected_16 = num1 % num2;
+
                         if (actual_8 === expected_8 && actual_16 === expected_16)
                             $display("[PASS] DIV: %4d / %4d = %4d (Rem: %4d)", num1, num2, actual_8, actual_16);
                         else
@@ -536,8 +567,31 @@ module tb_alu_system;
                                      num1, num2, expected_8, expected_16, actual_8, actual_16);
                     end
                 end
+
+                3'b100, 3'b101, 3'b110: begin
+                    // --- BITWISE LOGIC (100=AND, 101=OR, 110=XOR) ---
+                    logic_a = num1;
+                    logic_b = num2;
+                    logic_op = (sys_opcode == 3'b100) ? 2'b00 :
+                               (sys_opcode == 3'b101) ? 2'b01 : 2'b10;
+                    logic_enable = 1'b1;
+
+                    @(negedge clk);
+                    actual_8 = shared_outbus;
+                    expected_8 = (sys_opcode == 3'b100) ? (num1 & num2) :
+                                 (sys_opcode == 3'b101) ? (num1 | num2) : (num1 ^ num2);
+
+                    if (actual_8 === expected_8)
+                        $display("[PASS] %s: %8b op %8b = %8b", 
+                            (sys_opcode==3'b100)?"AND": (sys_opcode==3'b101)?"OR":"XOR", num1, num2, actual_8);
+                    else
+                        $display("[FAIL] %s: %8b op %8b = Expected %8b, Got %8b", 
+                            (sys_opcode==3'b100)?"AND": (sys_opcode==3'b101)?"OR":"XOR", num1, num2, expected_8, actual_8);
+                    
+                    logic_enable = 1'b0;
+                end
             endcase
-            @(negedge clk); 
+            @(negedge clk);
         end
     endtask
 
@@ -550,8 +604,16 @@ module tb_alu_system;
         shared_inbus = 8'hZZ;
         math_begin = 0;
         math_opcode = 0;
+        
         add_enable = 0;
-        add_x = 0; add_y = 0; add_s = 0;
+        add_x = 0;
+        add_y = 0; 
+        add_s = 0;
+
+        logic_enable = 0;
+        logic_a = 0;
+        logic_b = 0;
+        logic_op = 0;
 
         $display("========================================");
         $display("   STARTING UNIFIED ALU SIMULATION      ");
@@ -559,23 +621,32 @@ module tb_alu_system;
 
         #15 rst_b = 1;
 
-        $display("\n--- Testing Addition (Opcode 00) ---");
-        run_alu(2'b00, 8'd15, 8'd45);
-        run_alu(2'b00, -8'd10, 8'd5);
+        $display("\n--- Testing Addition (Opcode 000) ---");
+        run_alu(3'b000, 8'd15, 8'd45);
+        run_alu(3'b000, -8'd10, 8'd5);
 
-        $display("\n--- Testing Subtraction (Opcode 01) ---");
-        run_alu(2'b01, 8'd20, 8'd50); 
-        run_alu(2'b01, -8'd15, 8'd10); 
+        $display("\n--- Testing Subtraction (Opcode 001) ---");
+        run_alu(3'b001, 8'd20, 8'd50); 
+        run_alu(3'b001, -8'd15, 8'd10); 
 
-        $display("\n--- Testing Unified Multiplication (Opcode 10) ---");
-        run_alu(2'b10, 8'd12, 8'd10);
-        run_alu(2'b10, -8'd6, 8'd2);
-        run_alu(2'b10, 8'd0, 8'd15);   
+        $display("\n--- Testing Unified Multiplication (Opcode 010) ---");
+        run_alu(3'b010, 8'd12, 8'd10);
+        run_alu(3'b010, -8'd6, 8'd2);
+        run_alu(3'b010, 8'd0, 8'd15);   
 
-        $display("\n--- Testing Unified Division (Opcode 11) ---");
-        run_alu(2'b11, 8'd100, 8'd25);
-        run_alu(2'b11, 8'd15, 8'd4);
-        run_alu(2'b11, 8'd50, 8'd0);   
+        $display("\n--- Testing Unified Division (Opcode 011) ---");
+        run_alu(3'b011, 8'd100, 8'd25);
+        run_alu(3'b011, 8'd15, 8'd4);
+        run_alu(3'b011, 8'd50, 8'd0);   
+
+        $display("\n--- Testing Logical AND (Opcode 100) ---");
+        run_alu(3'b100, 8'b1100_1010, 8'b1010_1111);
+
+        $display("\n--- Testing Logical OR (Opcode 101) ---");
+        run_alu(3'b101, 8'b1100_1010, 8'b0000_1111);
+
+        $display("\n--- Testing Logical XOR (Opcode 110) ---");
+        run_alu(3'b110, 8'b1111_0000, 8'b1010_1010);
 
         $display("\n========================================");
         $display("          SIMULATION COMPLETE           ");
